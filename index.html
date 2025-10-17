@@ -44,6 +44,17 @@
 </head>
 <body class="p-4 md:p-8">
 
+    <!-- Indicador de Carga -->
+    <div id="loading-indicator" class="fixed inset-0 bg-gray-100 bg-opacity-75 flex items-center justify-center z-50">
+        <div class="p-4 bg-white rounded-lg shadow-lg flex items-center space-x-3">
+            <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span class="text-gray-700">Cargando datos y conectando a Firebase...</span>
+        </div>
+    </div>
+
     <div class="max-w-7xl mx-auto bg-white p-6 rounded-2xl shadow-lg">
 
         <!-- Cabecera -->
@@ -135,286 +146,384 @@
         </div>
     </div>
 
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const floorSelector = document.getElementById('floor-selector');
-            const floorTitle = document.getElementById('floor-title');
-            const tableBody = document.getElementById('insumos-table-body');
-            const addInsumoForm = document.getElementById('add-insumo-form');
-            const endDayButton = document.getElementById('end-day-button');
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-            // Modals
-            const editModal = document.getElementById('edit-modal');
-            const editInsumoForm = document.getElementById('edit-insumo-form');
-            const cancelEditButton = document.getElementById('cancel-edit-button');
-            const confirmModal = document.getElementById('confirm-modal');
+        // --- Variables Globales y Setup de Firebase (MANDATORIO) ---
+        // Se utilizan variables inyectadas por el entorno para la configuración
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-            let floorsData = {};
-            let currentFloor = '';
+        let app;
+        let db;
+        let auth;
+        let unsubscribeFloor = () => {}; // Función para limpiar el listener anterior
+        
+        // Estado de la aplicación
+        let floorsData = {};
+        let currentFloor = localStorage.getItem('currentFloor') || 'SUBSUELO';
+        let isAuthReady = false;
 
-            const defaultInsumos = [
-                { name: 'AGUJA CORTA', inventory: 48, separated: 0, surplus: 0 },
-                { name: 'AGUJA LARGA', inventory: 119, separated: 0, surplus: 0 },
-                { name: 'AGUJA PEDIATRICA', inventory: 8, separated: 0, surplus: 0 },
-                { name: 'ANESTESICO LIDO', inventory: 22, separated: 0, surplus: 0 },
-                { name: 'ANESTESICO MEPI', inventory: 44, separated: 0, surplus: 0 },
-                { name: 'CAMPO DE OJO NO ESTERIL', inventory: 113, separated: 0, surplus: 0 },
-                { name: 'CEPILLOS', inventory: 36, separated: 0, surplus: 0 },
-                { name: 'CERA ENCAJONADO', inventory: 70, separated: 0, surplus: 0 },
-                { name: 'COPAS', inventory: 176, separated: 0, surplus: 0 },
-                { name: 'CUBETAS AZULES', inventory: 17, separated: 0, surplus: 0 },
-                { name: 'EYECTOR DE SALIVA', inventory: 36, separated: 0, surplus: 0 },
-                { name: 'GODIVA', inventory: 35, separated: 0, surplus: 0 },
-                { name: 'JERINGA', inventory: 8, separated: 0, surplus: 0 },
-                { name: 'SUTURA 3/0', inventory: 0, separated: 0, surplus: 0 },
-                { name: 'SUTURA 4/0', inventory: 6, separated: 0, surplus: 0 },
-                { name: 'PUNTAS AMARILLAS', inventory: 30, separated: 0, surplus: 0 },
-                { name: 'CUBETA VERDE', inventory: 167, separated: 0, surplus: 0 },
-                { name: 'CUBETAS AMARILLAS', inventory: 38, separated: 0, surplus: 0 },
-                { name: 'CERA BASE', inventory: 20, separated: 0, surplus: 0 }
-            ];
+        // Elementos del DOM
+        const loadingIndicator = document.getElementById('loading-indicator');
+        const floorSelector = document.getElementById('floor-selector');
+        const floorTitle = document.getElementById('floor-title');
+        const tableBody = document.getElementById('insumos-table-body');
+        const addInsumoForm = document.getElementById('add-insumo-form');
+        const endDayButton = document.getElementById('end-day-button');
+        const editModal = document.getElementById('edit-modal');
+        const editInsumoForm = document.getElementById('edit-insumo-form');
+        const cancelEditButton = document.getElementById('cancel-edit-button');
+        const confirmModal = document.getElementById('confirm-modal');
 
-            // --- Funciones de Confirmación ---
-            function showConfirmModal(title, message, onConfirm) {
-                document.getElementById('confirm-title').textContent = title;
-                document.getElementById('confirm-message').textContent = message;
-                confirmModal.classList.remove('hidden');
+        const defaultInsumos = [
+            { name: 'AGUJA CORTA', inventory: 48, separated: 0, surplus: 0 },
+            { name: 'AGUJA LARGA', inventory: 119, separated: 0, surplus: 0 },
+            { name: 'AGUJA PEDIATRICA', inventory: 8, separated: 0, surplus: 0 },
+            { name: 'ANESTESICO LIDO', inventory: 22, separated: 0, surplus: 0 },
+            { name: 'ANESTESICO MEPI', inventory: 44, separated: 0, surplus: 0 },
+            { name: 'CAMPO DE OJO NO ESTERIL', inventory: 113, separated: 0, surplus: 0 },
+            { name: 'CEPILLOS', inventory: 36, separated: 0, surplus: 0 },
+            { name: 'CERA ENCAJONADO', inventory: 70, separated: 0, surplus: 0 },
+            { name: 'COPAS', inventory: 176, separated: 0, surplus: 0 },
+            { name: 'CUBETAS AZULES', inventory: 17, separated: 0, surplus: 0 },
+            { name: 'EYECTOR DE SALIVA', inventory: 36, separated: 0, surplus: 0 },
+            { name: 'GODIVA', inventory: 35, separated: 0, surplus: 0 },
+            { name: 'JERINGA', inventory: 8, separated: 0, surplus: 0 },
+            { name: 'SUTURA 3/0', inventory: 0, separated: 0, surplus: 0 },
+            { name: 'SUTURA 4/0', inventory: 6, separated: 0, surplus: 0 },
+            { name: 'PUNTAS AMARILLAS', inventory: 30, separated: 0, surplus: 0 },
+            { name: 'CUBETA VERDE', inventory: 167, separated: 0, surplus: 0 },
+            { name: 'CUBETAS AMARILLAS', inventory: 38, separated: 0, surplus: 0 },
+            { name: 'CERA BASE', inventory: 20, separated: 0, surplus: 0 }
+        ];
 
-                const okButton = document.getElementById('confirm-ok-button');
-                const cancelButton = document.getElementById('confirm-cancel-button');
+        // --- Funciones de Utilidad de Firebase ---
+        function getFloorDocRef(floorName) {
+            // Ruta pública para datos compartidos: /artifacts/{appId}/public/data/inventory_control/{floorName}
+            return doc(db, `artifacts/${appId}/public/data/inventory_control/${floorName}`);
+        }
 
-                const okHandler = () => {
-                    onConfirm();
-                    hideConfirmModal();
-                    cleanup();
-                };
-                const cancelHandler = () => {
-                    hideConfirmModal();
-                    cleanup();
-                };
-                
-                function cleanup() {
-                    okButton.removeEventListener('click', okHandler);
-                    cancelButton.removeEventListener('click', cancelHandler);
-                }
-
-                okButton.addEventListener('click', okHandler);
-                cancelButton.addEventListener('click', cancelHandler);
+        async function saveFloorDataToFirestore() {
+            if (!db || !isAuthReady) {
+                console.error("Firestore no está inicializado o el usuario no está autenticado.");
+                return;
+            }
+            if (!floorsData[currentFloor]) {
+                console.warn(`No hay datos para guardar para el piso: ${currentFloor}`);
+                return;
             }
 
-            function hideConfirmModal() {
-                confirmModal.classList.add('hidden');
+            const dataToSave = {
+                insumos: floorsData[currentFloor],
+                lastUpdated: new Date().toISOString()
+            };
+
+            try {
+                await setDoc(getFloorDocRef(currentFloor), dataToSave, { merge: true });
+                // console.log(`Datos guardados exitosamente para el piso: ${currentFloor}`);
+            } catch (error) {
+                console.error("Error al guardar datos en Firestore:", error);
+                // Mostrar un mensaje de error al usuario si es crítico
             }
+        }
 
-            // --- Funciones de Datos ---
-            function loadData() {
-                const storedData = localStorage.getItem('insumosData');
-                floorsData = storedData ? JSON.parse(storedData) : {};
-                currentFloor = localStorage.getItem('currentFloor') || 'SUBSUELO';
-                floorSelector.value = currentFloor;
-                
-                // Asegurarse de que todos los pisos existan en los datos
-                Array.from(floorSelector.options).forEach(option => {
-                    if (!floorsData[option.value]) {
-                        // Crear una copia profunda para evitar referencias cruzadas
-                        floorsData[option.value] = JSON.parse(JSON.stringify(defaultInsumos));
-                    }
-                });
+        function startFirestoreListener() {
+            // Detener el listener anterior
+            unsubscribeFloor();
+            
+            if (!db || !isAuthReady) return;
 
-                saveData();
-                switchFloor(currentFloor);
-            }
-
-            function saveData() {
-                localStorage.setItem('insumosData', JSON.stringify(floorsData));
-                localStorage.setItem('currentFloor', currentFloor);
-            }
-
-            function switchFloor(newFloor) {
-                currentFloor = newFloor;
-                floorTitle.textContent = `Control de Unidades - ${currentFloor.replace('_', ' ')}`;
-                renderTable();
-            }
-
-            // --- Funciones de Renderizado ---
-            function renderTable() {
-                tableBody.innerHTML = '';
-                const insumos = floorsData[currentFloor] || [];
-                
-                insumos.sort((a, b) => a.name.localeCompare(b.name));
-
-                if (insumos.length === 0) {
-                    tableBody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-gray-500">No hay insumos para este piso. Agrega uno nuevo para empezar.</td></tr>`;
-                    return;
-                }
-
-                insumos.forEach(insumo => {
-                    const row = document.createElement('tr');
-                    row.className = 'border-b hover:bg-gray-50';
-                    const gastado = Math.max(0, insumo.separated - insumo.surplus);
-
-                    row.innerHTML = `
-                        <td class="text-left py-3 px-4 font-medium">${insumo.name}</td>
-                        <td class="text-center py-3 px-4">${insumo.inventory}</td>
-                        <td class="text-center py-3 px-4"><input type="number" min="0" value="${insumo.separated}" class="table-input separated-input" data-name="${insumo.name}"></td>
-                        <td class="text-center py-3 px-4"><input type="number" min="0" value="${insumo.surplus}" class="table-input surplus-input" data-name="${insumo.name}"></td>
-                        <td class="text-center py-3 px-4 font-semibold gastado-cell">${gastado}</td>
-                        <td class="text-center py-3 px-4">
-                            <button class="edit-button p-1 text-blue-600 hover:text-blue-800" data-name="${insumo.name}">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828zM5 12V7a2 2 0 012-2h2.586l-4.586 4.586V12zM3 13.172V17h3.828l7.586-7.586-3.828-3.828L3 13.172z" /></svg>
-                            </button>
-                            <button class="delete-button p-1 text-red-600 hover:text-red-800" data-name="${insumo.name}">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" /></svg>
-                            </button>
-                        </td>
-                    `;
-                    tableBody.appendChild(row);
-                });
-            }
-
-            // --- Manejadores de Eventos ---
-            floorSelector.addEventListener('change', (e) => {
-                switchFloor(e.target.value);
-                saveData();
-            });
-
-            tableBody.addEventListener('input', (e) => {
-                const target = e.target;
-                if (!target.classList.contains('table-input')) return;
-
-                const name = target.dataset.name;
-                const value = parseInt(target.value, 10) || 0;
-                const insumo = floorsData[currentFloor].find(i => i.name === name);
-
-                if (insumo) {
-                    if (target.classList.contains('separated-input')) {
-                        insumo.separated = value;
-                    } else if (target.classList.contains('surplus-input')) {
-                        insumo.surplus = value;
-                    }
-
-                    // Recalcular y actualizar la celda 'Gastado'
-                    const gastado = Math.max(0, insumo.separated - insumo.surplus);
-                    const row = target.closest('tr');
-                    row.querySelector('.gastado-cell').textContent = gastado;
-                    
-                    saveData();
-                }
-            });
-
-            tableBody.addEventListener('click', (e) => {
-                const button = e.target.closest('button');
-                if (!button) return;
-
-                const name = button.dataset.name;
-
-                if (button.classList.contains('delete-button')) {
-                    showConfirmModal(
-                        'Confirmar Eliminación',
-                        `¿Estás seguro de que quieres eliminar "${name}"? Esta acción no se puede deshacer.`,
-                        () => {
-                            floorsData[currentFloor] = floorsData[currentFloor].filter(i => i.name !== name);
-                            saveData();
-                            renderTable();
-                        }
-                    );
-                } else if (button.classList.contains('edit-button')) {
-                    const insumo = floorsData[currentFloor].find(i => i.name === name);
-                    if (insumo) {
-                        document.getElementById('edit-original-name').value = insumo.name;
-                        document.getElementById('edit-insumo-name').value = insumo.name;
-                        document.getElementById('edit-insumo-inventory').value = insumo.inventory;
-                        editModal.classList.remove('hidden');
-                    }
-                }
-            });
-
-            addInsumoForm.addEventListener('submit', (e) => {
-                e.preventDefault();
-                const nameInput = document.getElementById('new-insumo-name');
-                const inventoryInput = document.getElementById('new-insumo-inventory');
-                
-                const newName = nameInput.value.trim().toUpperCase();
-                const newInventory = parseInt(inventoryInput.value, 10);
-
-                if (!newName) {
-                    alert('El nombre del insumo no puede estar vacío.');
-                    return;
-                }
-
-                const exists = floorsData[currentFloor].some(i => i.name.toLowerCase() === newName.toLowerCase());
-                if (exists) {
-                    alert('Este insumo ya existe en la lista.');
-                    return;
-                }
-
-                floorsData[currentFloor].push({
-                    name: newName,
-                    inventory: newInventory,
-                    separated: 0,
-                    surplus: 0
-                });
-
-                saveData();
-                renderTable();
-                addInsumoForm.reset();
-            });
-
-            editInsumoForm.addEventListener('submit', (e) => {
-                e.preventDefault();
-                const originalName = document.getElementById('edit-original-name').value;
-                const newName = document.getElementById('edit-insumo-name').value.trim().toUpperCase();
-                const newInventory = parseInt(document.getElementById('edit-insumo-inventory').value, 10);
-
-                if (!newName) {
-                    alert('El nombre del insumo no puede estar vacío.');
-                    return;
-                }
-
-                // Verificar si el nuevo nombre ya existe (y no es el mismo insumo)
-                const exists = floorsData[currentFloor].some(i => i.name.toLowerCase() === newName.toLowerCase() && i.name !== originalName);
-                if (exists) {
-                    alert('Ya existe otro insumo con ese nombre.');
-                    return;
-                }
-                
-                const insumo = floorsData[currentFloor].find(i => i.name === originalName);
-                if (insumo) {
-                    insumo.name = newName;
-                    insumo.inventory = newInventory;
-                    saveData();
+            const docRef = getFloorDocRef(currentFloor);
+            
+            // Iniciar nuevo listener
+            unsubscribeFloor = onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    floorsData[currentFloor] = data.insumos || [];
                     renderTable();
-                    editModal.classList.add('hidden');
+                } else {
+                    // Si no existe, inicializar con los datos por defecto y guardarlos
+                    console.log(`Documento para ${currentFloor} no encontrado. Inicializando con valores por defecto.`);
+                    floorsData[currentFloor] = JSON.parse(JSON.stringify(defaultInsumos));
+                    saveFloorDataToFirestore(); // Crea el documento
                 }
+                loadingIndicator.classList.add('hidden');
+            }, (error) => {
+                console.error("Error al escuchar en Firestore:", error);
+                loadingIndicator.classList.add('hidden');
             });
+        }
 
-            cancelEditButton.addEventListener('click', () => {
-                editModal.classList.add('hidden');
+        function switchFloor(newFloor) {
+            localStorage.setItem('currentFloor', newFloor);
+            currentFloor = newFloor;
+            floorTitle.textContent = `Control de Unidades - ${currentFloor.replace('_', ' ')}`;
+            
+            if (isAuthReady) {
+                loadingIndicator.classList.remove('hidden');
+                startFirestoreListener();
+            } else {
+                // Renderizar vacío hasta que Firebase esté listo
+                tableBody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-gray-500">Conectando...</td></tr>`;
+            }
+        }
+
+        // --- Funciones de Inicialización ---
+        async function setupFirebaseAndAuth() {
+            try {
+                // setLogLevel('debug'); // Descomentar para debug de Firebase
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                
+                isAuthReady = true;
+                // Una vez autenticado, iniciar la carga de datos del piso actual
+                switchFloor(currentFloor); 
+
+            } catch (error) {
+                console.error("Error al configurar Firebase/Auth:", error);
+                loadingIndicator.innerHTML = '<span class="text-red-600">Error de conexión con la base de datos.</span>';
+            }
+        }
+
+        // --- Funciones de Confirmación (sin cambios) ---
+        function showConfirmModal(title, message, onConfirm) {
+            document.getElementById('confirm-title').textContent = title;
+            document.getElementById('confirm-message').textContent = message;
+            confirmModal.classList.remove('hidden');
+
+            const okButton = document.getElementById('confirm-ok-button');
+            const cancelButton = document.getElementById('confirm-cancel-button');
+
+            const okHandler = () => {
+                onConfirm();
+                hideConfirmModal();
+                cleanup();
+            };
+            const cancelHandler = () => {
+                hideConfirmModal();
+                cleanup();
+            };
+            
+            function cleanup() {
+                okButton.removeEventListener('click', okHandler);
+                cancelButton.removeEventListener('click', cancelHandler);
+            }
+
+            okButton.addEventListener('click', okHandler);
+            cancelButton.addEventListener('click', cancelHandler);
+        }
+
+        function hideConfirmModal() {
+            confirmModal.classList.add('hidden');
+        }
+
+        // --- Funciones de Renderizado ---
+        function renderTable() {
+            tableBody.innerHTML = '';
+            const insumos = floorsData[currentFloor] || [];
+            
+            insumos.sort((a, b) => a.name.localeCompare(b.name));
+
+            if (insumos.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-gray-500">No hay insumos para este piso. Agrega uno nuevo para empezar.</td></tr>`;
+                return;
+            }
+
+            insumos.forEach(insumo => {
+                const row = document.createElement('tr');
+                row.className = 'border-b hover:bg-gray-50';
+                const gastado = Math.max(0, insumo.separated - insumo.surplus);
+
+                row.innerHTML = `
+                    <td class="text-left py-3 px-4 font-medium">${insumo.name}</td>
+                    <td class="text-center py-3 px-4">${insumo.inventory}</td>
+                    <td class="text-center py-3 px-4"><input type="number" min="0" value="${insumo.separated}" class="table-input separated-input" data-name="${insumo.name}"></td>
+                    <td class="text-center py-3 px-4"><input type="number" min="0" value="${insumo.surplus}" class="table-input surplus-input" data-name="${insumo.name}"></td>
+                    <td class="text-center py-3 px-4 font-semibold gastado-cell">${gastado}</td>
+                    <td class="text-center py-3 px-4">
+                        <button class="edit-button p-1 text-blue-600 hover:text-blue-800" data-name="${insumo.name}">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828zM5 12V7a2 2 0 012-2h2.586l-4.586 4.586V12zM3 13.172V17h3.828l7.586-7.586-3.828-3.828L3 13.172z" /></svg>
+                        </button>
+                        <button class="delete-button p-1 text-red-600 hover:text-red-800" data-name="${insumo.name}">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" /></svg>
+                        </button>
+                    </td>
+                `;
+                tableBody.appendChild(row);
             });
+        }
 
-            endDayButton.addEventListener('click', () => {
+        // --- Manejadores de Eventos ---
+        floorSelector.addEventListener('change', (e) => {
+            switchFloor(e.target.value);
+        });
+
+        tableBody.addEventListener('input', (e) => {
+            const target = e.target;
+            if (!target.classList.contains('table-input')) return;
+
+            const name = target.dataset.name;
+            // Asegurarse de que el valor es un número entero no negativo
+            const value = Math.max(0, parseInt(target.value, 10) || 0);
+            target.value = value; // Sincronizar el input con el valor validado
+            
+            const insumo = floorsData[currentFloor].find(i => i.name === name);
+
+            if (insumo) {
+                if (target.classList.contains('separated-input')) {
+                    insumo.separated = value;
+                } else if (target.classList.contains('surplus-input')) {
+                    insumo.surplus = value;
+                }
+
+                // Recalcular y actualizar la celda 'Gastado'
+                const gastado = Math.max(0, insumo.separated - insumo.surplus);
+                const row = target.closest('tr');
+                row.querySelector('.gastado-cell').textContent = gastado;
+                
+                saveFloorDataToFirestore();
+            }
+        });
+
+        tableBody.addEventListener('click', (e) => {
+            const button = e.target.closest('button');
+            if (!button) return;
+
+            const name = button.dataset.name;
+
+            if (button.classList.contains('delete-button')) {
                 showConfirmModal(
-                    'Finalizar Día',
-                    'Esta acción actualizará el inventario con los valores gastados y reiniciará los campos para el día siguiente. ¿Estás seguro?',
+                    'Confirmar Eliminación',
+                    `¿Estás seguro de que quieres eliminar "${name}"? Esta acción no se puede deshacer.`,
                     () => {
-                        const insumos = floorsData[currentFloor];
-                        insumos.forEach(insumo => {
-                            const gastado = Math.max(0, insumo.separated - insumo.surplus);
-                            insumo.inventory -= gastado;
-                            if (insumo.inventory < 0) insumo.inventory = 0; // Evitar inventario negativo
-                            
-                            insumo.separated = insumo.surplus;
-                            insumo.surplus = 0;
-                        });
-                        saveData();
+                        floorsData[currentFloor] = floorsData[currentFloor].filter(i => i.name !== name);
+                        saveFloorDataToFirestore();
                         renderTable();
                     }
                 );
-            });
-            
-            // Inicializar la aplicación
-            loadData();
+            } else if (button.classList.contains('edit-button')) {
+                const insumo = floorsData[currentFloor].find(i => i.name === name);
+                if (insumo) {
+                    document.getElementById('edit-original-name').value = insumo.name;
+                    document.getElementById('edit-insumo-name').value = insumo.name;
+                    document.getElementById('edit-insumo-inventory').value = insumo.inventory;
+                    editModal.classList.remove('hidden');
+                }
+            }
         });
+
+        addInsumoForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const nameInput = document.getElementById('new-insumo-name');
+            const inventoryInput = document.getElementById('new-insumo-inventory');
+            
+            const newName = nameInput.value.trim().toUpperCase();
+            const newInventory = Math.max(0, parseInt(inventoryInput.value, 10) || 0);
+
+            if (!newName) {
+                // Usar modal de confirmación como mensaje de error simple
+                showConfirmModal('Error', 'El nombre del insumo no puede estar vacío.', () => hideConfirmModal());
+                document.getElementById('confirm-ok-button').textContent = 'Entendido';
+                return;
+            }
+
+            const exists = floorsData[currentFloor].some(i => i.name.toLowerCase() === newName.toLowerCase());
+            if (exists) {
+                showConfirmModal('Error', 'Este insumo ya existe en la lista.', () => hideConfirmModal());
+                document.getElementById('confirm-ok-button').textContent = 'Entendido';
+                return;
+            }
+
+            floorsData[currentFloor].push({
+                name: newName,
+                inventory: newInventory,
+                separated: 0,
+                surplus: 0
+            });
+
+            saveFloorDataToFirestore();
+            renderTable();
+            addInsumoForm.reset();
+        });
+
+        editInsumoForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const originalName = document.getElementById('edit-original-name').value;
+            const newName = document.getElementById('edit-insumo-name').value.trim().toUpperCase();
+            const newInventory = Math.max(0, parseInt(document.getElementById('edit-insumo-inventory').value, 10) || 0);
+
+            if (!newName) {
+                showConfirmModal('Error', 'El nombre del insumo no puede estar vacío.', () => hideConfirmModal());
+                document.getElementById('confirm-ok-button').textContent = 'Entendido';
+                return;
+            }
+
+            // Verificar si el nuevo nombre ya existe (y no es el mismo insumo)
+            const exists = floorsData[currentFloor].some(i => i.name.toLowerCase() === newName.toLowerCase() && i.name !== originalName);
+            if (exists) {
+                showConfirmModal('Error', 'Ya existe otro insumo con ese nombre.', () => hideConfirmModal());
+                document.getElementById('confirm-ok-button').textContent = 'Entendido';
+                return;
+            }
+            
+            const insumo = floorsData[currentFloor].find(i => i.name === originalName);
+            if (insumo) {
+                insumo.name = newName;
+                insumo.inventory = newInventory;
+                saveFloorDataToFirestore();
+                renderTable();
+                editModal.classList.add('hidden');
+            }
+        });
+
+        cancelEditButton.addEventListener('click', () => {
+            editModal.classList.add('hidden');
+        });
+
+        endDayButton.addEventListener('click', () => {
+            showConfirmModal(
+                'Finalizar Día',
+                'Esta acción actualizará el inventario con los valores gastados y reiniciará los campos para el día siguiente. ¿Estás seguro?',
+                () => {
+                    const insumos = floorsData[currentFloor];
+                    insumos.forEach(insumo => {
+                        const gastado = Math.max(0, insumo.separated - insumo.surplus);
+                        insumo.inventory -= gastado;
+                        if (insumo.inventory < 0) insumo.inventory = 0; // Evitar inventario negativo
+                        
+                        // Sobrante pasa a ser lo separado del día siguiente
+                        insumo.separated = insumo.surplus; 
+                        insumo.surplus = 0;
+                    });
+                    saveFloorDataToFirestore();
+                    renderTable();
+                }
+            );
+        });
+        
+        // Inicializar la aplicación al cargar el DOM
+        document.addEventListener('DOMContentLoaded', () => {
+            floorSelector.value = currentFloor; // Asegurar que el selector refleje el piso inicial
+            floorTitle.textContent = `Control de Unidades - ${currentFloor.replace('_', ' ')}`;
+            setupFirebaseAndAuth();
+        });
+
+        // Limpieza de listener al cerrar/salir
+        window.addEventListener('beforeunload', () => {
+            unsubscribeFloor();
+        });
+
     </script>
 </body>
 </html>
