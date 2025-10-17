@@ -178,8 +178,9 @@
         let unsubscribeFloor = () => {}; // Función para limpiar el listener anterior
         
         // Estado de la aplicación
+        // Recupera el último piso guardado. Si no existe, usa 'SUBSUELO'
         let floorsData = {};
-        let currentFloor = localStorage.getItem('currentFloor') || 'SUBSUELO';
+        let currentFloor = localStorage.getItem('currentFloor') || 'SUBSUELO'; 
         let isAuthReady = false;
         // Bandera para saber si los datos del piso actual ya fueron cargados por el listener
         let isFloorDataLoaded = false; 
@@ -623,15 +624,17 @@
         
         // Inicializar la aplicación al cargar el DOM
         document.addEventListener('DOMContentLoaded', () => {
-            // Inicializar el selector con el valor guardado
-            const floorOption = floorSelector.querySelector(`option[value="${currentFloor}"]`);
-            if (floorOption) {
-                floorSelector.value = currentFloor;
-            } else {
+            // FIX: Simplificamos la lógica de inicialización para que use directamente el valor de 'currentFloor'
+            // que fue cargado desde localStorage. El chequeo anterior causaba un reseteo innecesario.
+            floorSelector.value = currentFloor;
+            
+            // Si por alguna razón el valor cargado no es una opción válida, nos aseguramos de que
+            // floorSelector muestre algo válido y currentFloor se actualice.
+            if (floorSelector.value !== currentFloor) {
                 currentFloor = 'SUBSUELO';
                 floorSelector.value = currentFloor;
             }
-            
+
             floorTitle.textContent = `Control de Unidades - ${currentFloor.replace('_', ' ')}`;
             setupFirebaseAndAuth();
         });
