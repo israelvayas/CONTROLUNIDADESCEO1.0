@@ -152,9 +152,17 @@
         import { getFirestore, doc, setDoc, onSnapshot, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- Variables Globales y Setup de Firebase (MANDATORIO) ---
-        // Se utilizan variables inyectadas por el entorno para la configuración
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        
+        // CONFIGURACIÓN DE FIREBASE SOLICITADA POR EL USUARIO (ACTUALIZADA)
+        const firebaseConfig = {
+            apiKey: "AIzaSyDGKvnkPqv8d6egejRgM3F14Z_IY_M9ukc",
+            authDomain: "controlunidadesceo.firebaseapp.com",
+            projectId: "controlunidadesceo",
+            storageBucket: "controlunidadesceo.firebasestorage.app",
+            messagingSenderId: "7574596863",
+            appId: "1:7574596863:web:cc2d5f53fcfdbbce9f70ca"
+        };
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         let app;
@@ -227,7 +235,7 @@
                 // console.log(`Datos guardados exitosamente para el piso: ${currentFloor}`);
             } catch (error) {
                 console.error("Error al guardar datos en Firestore:", error);
-                // Mostrar un mensaje de error al usuario si es crítico
+                // Aquí se podría implementar lógica de reintento o mostrar un error al usuario.
             }
         }
 
@@ -243,8 +251,14 @@
             unsubscribeFloor = onSnapshot(docRef, (docSnap) => {
                 if (docSnap.exists()) {
                     const data = docSnap.data();
-                    floorsData[currentFloor] = data.insumos || [];
-                    renderTable();
+                    // Solo actualiza si los datos han cambiado para evitar bucles de renderizado innecesarios
+                    const newInsumos = data.insumos || [];
+                    const currentInsumos = floorsData[currentFloor];
+                    
+                    if (JSON.stringify(newInsumos) !== JSON.stringify(currentInsumos)) {
+                        floorsData[currentFloor] = newInsumos;
+                        renderTable();
+                    }
                 } else {
                     // Si no existe, inicializar con los datos por defecto y guardarlos
                     console.log(`Documento para ${currentFloor} no encontrado. Inicializando con valores por defecto.`);
@@ -280,10 +294,22 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
+                // Autenticación usando el token de Firebase o anónimamente si no hay token
                 if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
+                    try {
+                        // Intenta iniciar sesión con el token personalizado
+                        await signInWithCustomToken(auth, initialAuthToken);
+                        console.log("Sesión iniciada con token personalizado (Correcto).");
+                    } catch (tokenError) {
+                        // Si falla (como con custom-token-mismatch), recurre a la autenticación anónima
+                        console.warn("Token personalizado falló. Intentando iniciar sesión anónimamente.", tokenError);
+                        await signInAnonymously(auth);
+                        console.log("Sesión iniciada anónimamente (Fallback).");
+                    }
                 } else {
+                    // Si no hay token inicial, usa anónimo por defecto
                     await signInAnonymously(auth);
+                    console.log("Sesión iniciada anónimamente.");
                 }
                 
                 isAuthReady = true;
@@ -292,7 +318,7 @@
 
             } catch (error) {
                 console.error("Error al configurar Firebase/Auth:", error);
-                loadingIndicator.innerHTML = '<span class="text-red-600">Error de conexión con la base de datos.</span>';
+                loadingIndicator.innerHTML = '<span class="text-red-600">Error de conexión con la base de datos. Por favor, revisa la consola para más detalles.</span>';
             }
         }
 
