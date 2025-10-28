@@ -388,15 +388,18 @@
             confirmModal.classList.add('hidden');
         }
 
-        // --- NUEVA FUNCIÓN PARA TOAST Y SONIDO ---
+        // --- FUNCIÓN DE TOAST Y SONIDO ACTUALIZADA ---
         function showSuccessToast() {
-            // 1. Reproducir un sonido de éxito
+            // 1. Reproducir el sonido de victoria
             try {
-                // Uso de un data URI de MP3 muy simple como fallback/sonido estándar.
-                // Nota: El audio puede requerir interacción del usuario con la página.
-                const successAudio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU1UAAAAPU291bmRGb3JnZSB2My4wVwAAAAScMGF1dGhvciBhY2NlcHQgbGlzZW5zZSBsZWdhY3k=');
-                successAudio.volume = 1.0; // AJUSTADO A VOLUMEN MÁXIMO
+                // Usando la URL RAW (directa) del archivo MP3 en GitHub
+                const audioUrl = 'https://raw.githubusercontent.com/israelvayas/CONTROLUNIDADESCEO1.0/main/small-victory.mp3';
+                const successAudio = new Audio(audioUrl);
+                
+                successAudio.volume = 1.0; // Mantiene el volumen al máximo
                 successAudio.load(); // Intenta precargar para mejor fiabilidad
+                
+                // Intentar reproducir. La reproducción automática puede fallar si no hay interacción previa.
                 successAudio.play().catch(e => console.warn("No se pudo reproducir el audio de éxito. Asegúrate de haber interactuado con la página.", e));
             } catch (e) {
                  console.warn("Error al crear el objeto Audio:", e);
