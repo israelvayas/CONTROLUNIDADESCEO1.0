@@ -46,6 +46,24 @@
             font-weight: 700; /* Bold */
             color: #dc2626; /* text-red-600 */
         }
+        /* Estilo para items de la lista de historial */
+        .history-list-item:hover {
+            background-color: #f3f4f6; /* bg-gray-100 */
+        }
+        .history-list-item.active {
+            background-color: #e5e7eb; /* bg-gray-200 */
+            font-weight: 600;
+        }
+        /* Corregir el scroll para el modal de historial y evitar que la ventana principal se mueva */
+        #history-modal .modal-content {
+            max-height: 90vh; /* Limita la altura del modal */
+            overflow-y: auto; /* Permite scroll en el modal si es necesario */
+        }
+        /* Contenedor de lista de fechas con scroll forzado */
+        #history-list {
+            max-height: 400px; /* Altura máxima para el scroll de las fechas */
+            overflow-y: auto;
+        }
     </style>
 </head>
 <body class="p-4 md:p-8">
@@ -72,6 +90,9 @@
                     <option>PISO 2</option>
                     <option>PISO 3</option>
                 </select>
+                <button id="view-history-button" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-md whitespace-nowrap">
+                    Ver Historial
+                </button>
                 <button id="end-day-button" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md whitespace-nowrap">
                     Finalizar Día
                 </button>
@@ -133,7 +154,44 @@
             </form>
         </div>
     </div>
+    <div id="history-modal" class="hidden fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-50 p-4 modal">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl p-6 modal-content">
+            <div class="flex justify-between items-center mb-4 pb-4 border-b">
+                <h2 class="text-2xl font-bold text-gray-800">Historial de Cierres - <span id="history-floor-title"></span></h2>
+                <button id="close-history-button" class="text-gray-500 hover:text-gray-800 p-1">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            
+            <div class="flex space-x-6 h-full">
+                <div class="w-1/3 border-r pr-6 flex flex-col">
+                    <h3 class="text-lg font-semibold text-gray-700 mb-3">Registros por Fecha</h3>
+                    <ul id="history-list" class="space-y-1 overflow-y-auto flex-grow"> 
+                        <li class="text-gray-500 text-center py-4">Cargando...</li>
+                    </ul>
+                </div>
 
+                <div class="w-2/3">
+                    <h3 class="text-lg font-semibold text-gray-700 mb-3" id="history-detail-title">Selecciona una fecha...</h3>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full bg-white border">
+                            <thead class="bg-gray-100">
+                                <tr>
+                                    <th class="text-left py-2 px-3 uppercase font-semibold text-xs">Insumo</th>
+                                    <th class="text-center py-2 px-3 uppercase font-semibold text-xs">Inv. Inicial</th>
+                                    <th class="text-center py-2 px-3 uppercase font-semibold text-xs">Separado</th>
+                                    <th class="text-center py-2 px-3 uppercase font-semibold text-xs">Sobrante</th> <th class="text-center py-2 px-3 uppercase font-semibold text-xs">Gastado</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-detail-body" class="text-gray-700">
+                                <tr><td colspan="5" class="text-center py-4 text-gray-500">El detalle del día aparecerá aquí.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
     <div id="confirm-modal" class="hidden fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-50 p-4 modal">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-sm p-6 modal-content text-center">
             <h2 id="confirm-title" class="text-xl font-bold text-gray-800 mb-4"></h2>
@@ -156,7 +214,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- Variables Globales y Setup de Firebase (MANDATORIO) ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -178,11 +236,9 @@
         let unsubscribeFloor = () => {}; // Función para limpiar el listener anterior
         
         // Estado de la aplicación
-        // Recupera el último piso guardado. Si no existe, usa 'SUBSUELO'
         let floorsData = {};
         let currentFloor = localStorage.getItem('currentFloor') || 'SUBSUELO'; 
         let isAuthReady = false;
-        // Bandera para saber si los datos del piso actual ya fueron cargados por el listener
         let isFloorDataLoaded = false; 
 
         // Elementos del DOM
@@ -198,37 +254,36 @@
         const confirmModal = document.getElementById('confirm-modal');
         const confirmOkButton = document.getElementById('confirm-ok-button');
         const confirmCancelButton = document.getElementById('confirm-cancel-button');
-        
-        // --- NUEVOS ELEMENTOS PARA NOTIFICACIÓN DE ÉXITO ---
         const successToast = document.getElementById('success-toast');
         const toastContent = document.getElementById('toast-content');
 
-
-        const defaultInsumos = []; 
+        // --- ELEMENTOS DE HISTORIAL ---
+        const viewHistoryButton = document.getElementById('view-history-button');
+        const historyModal = document.getElementById('history-modal');
+        const closeHistoryButton = document.getElementById('close-history-button');
+        const historyFloorTitle = document.getElementById('history-floor-title');
+        const historyList = document.getElementById('history-list');
+        const historyDetailTitle = document.getElementById('history-detail-title');
+        const historyDetailBody = document.getElementById('history-detail-body');
+        let floorHistoryData = {}; // Cache para el historial del piso actual
 
         // --- Funciones de Utilidad de Firebase ---
         function getFloorDocRef(floorName) {
-            // La ruta usa el nombre del piso, asegurando que los datos de cada piso estén aislados
             return doc(db, `artifacts/${appId}/public/data/inventory_control/${floorName}`);
+        }
+        
+        // Obtener la referencia a la colección de historial para un piso
+        function getHistoryCollectionRef(floorName) {
+             return collection(db, `artifacts/${appId}/public/data/inventory_control/${floorName}/history`);
         }
 
         async function saveFloorDataToFirestore() {
-            if (!db || !isAuthReady) {
-                console.error("Firestore no está inicializado o el usuario no está autenticado.");
+            if (!db || !isAuthReady || !isFloorDataLoaded) {
+                console.error("Firestore no está listo o la data no ha cargado para guardar.");
                 return;
-            }
-            
-            // *** RESTRICCIÓN CLAVE: NO PERMITIR GUARDAR SI LOS DATOS NO HAN SIDO CARGADOS ***
-            // Esto previene que se guarde un array vacío temporalmente inicializado.
-            if (!isFloorDataLoaded) {
-                 console.warn("Intento de guardar datos antes de la carga inicial de Firestore. Operación cancelada.");
-                 return;
             }
 
-            if (!floorsData[currentFloor]) {
-                console.warn(`No hay datos para guardar para el piso: ${currentFloor} (array nulo/undefined).`);
-                return;
-            }
+            if (!floorsData[currentFloor]) return;
 
             const dataToSave = {
                 insumos: floorsData[currentFloor],
@@ -236,24 +291,38 @@
             };
 
             try {
-                // setDoc actualizará el documento o lo creará si no existe
                 await setDoc(getFloorDocRef(currentFloor), dataToSave, { merge: true });
-                // console.log(`Datos guardados exitosamente para el piso: ${currentFloor}`);
             } catch (error) {
-                console.error("Error al guardar datos en Firestore:", error);
+                console.error("Error al guardar datos de insumos en Firestore:", error);
+            }
+        }
+        
+        // Guardar el registro de cierre de día
+        async function saveDayCloseRecord(recordData) {
+            if (!db || !isAuthReady) {
+                 console.error("Firestore no está listo para guardar el registro de cierre.");
+                 return;
+            }
+            try {
+                const historyRef = getHistoryCollectionRef(currentFloor);
+                // El ID del documento es el timestamp para ordenar y asegurar unicidad
+                const docId = new Date().toISOString().replace(/\./g, '_'); 
+                await setDoc(doc(historyRef, docId), recordData);
+                console.log(`Registro de cierre guardado exitosamente para ${currentFloor}`);
+            } catch (error) {
+                console.error("Error al guardar el registro de cierre de día:", error);
             }
         }
 
+
         function startFirestoreListener() {
-            // Detener el listener anterior para asegurar el aislamiento de datos.
             unsubscribeFloor();
-            isFloorDataLoaded = false; // Reiniciar la bandera al cambiar de piso
+            isFloorDataLoaded = false;
             
             if (!db || !isAuthReady) return;
 
             const docRef = getFloorDocRef(currentFloor);
             
-            // Iniciar nuevo listener
             unsubscribeFloor = onSnapshot(docRef, (docSnap) => {
                 const dataExists = docSnap.exists();
                 
@@ -262,22 +331,16 @@
                     const newInsumos = data.insumos || [];
                     const currentInsumos = floorsData[currentFloor];
                     
-                    // Solo actualiza si los datos han cambiado para evitar re-renderizados innecesarios
-                    // y siempre actualiza si es la primera carga (isFloorDataLoaded === false)
                     if (JSON.stringify(newInsumos) !== JSON.stringify(currentInsumos) || !isFloorDataLoaded) {
                         floorsData[currentFloor] = newInsumos;
                         renderTable();
-                        isFloorDataLoaded = true; // La data ya está cargada
-                        // console.log(`Datos cargados para ${currentFloor}: ${newInsumos.length} insumos.`);
+                        isFloorDataLoaded = true;
                     }
                 } else {
-                    // Si el documento NO existe, inicializa con un array vacío.
                     console.log(`Documento para ${currentFloor} no encontrado. Inicializando con array vacío.`);
                     floorsData[currentFloor] = [];
-                    renderTable(); // Renderiza la tabla vacía
-                    isFloorDataLoaded = true; // Se considera cargado (vacío)
-                    // Además, si el documento no existe y estamos agregando data, debemos crearlo
-                    // Pero esperaremos a que el usuario agregue el primer insumo para crear el documento
+                    renderTable();
+                    isFloorDataLoaded = true;
                 }
                 loadingIndicator.classList.add('hidden');
             }, (error) => {
@@ -290,45 +353,34 @@
             localStorage.setItem('currentFloor', newFloor);
             currentFloor = newFloor;
             floorTitle.textContent = `Control de Unidades - ${currentFloor.replace('_', ' ')}`;
+            historyFloorTitle.textContent = currentFloor.replace('_', ' '); // Actualizar título del modal de historial
             
             if (isAuthReady) {
                 loadingIndicator.classList.remove('hidden');
-                // IMPORTANTE: NO inicializar floorsData[currentFloor] aquí. Dejar que el listener lo haga.
                 startFirestoreListener();
             } else {
-                // Renderizar vacío hasta que Firebase esté listo
                 tableBody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-gray-500">Conectando...</td></tr>`;
             }
         }
         
-        // --- Funciones de Inicialización ---
         async function setupFirebaseAndAuth() {
             try {
-                // setLogLevel('debug'); // Descomentar para debug de Firebase
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                // Autenticación usando el token de Firebase o anónimamente si no hay token
                 if (initialAuthToken) {
                     try {
-                        // Intenta iniciar sesión con el token personalizado
                         await signInWithCustomToken(auth, initialAuthToken);
-                        console.log("Sesión iniciada con token personalizado (Correcto).");
                     } catch (tokenError) {
-                        // Si falla (como con custom-token-mismatch), recurre a la autenticación anónima
                         console.warn("Token personalizado falló. Intentando iniciar sesión anónimamente.", tokenError);
                         await signInAnonymously(auth);
-                        console.log("Sesión iniciada anónimamente (Fallback).");
                     }
                 } else {
-                    // Si no hay token inicial, usa anónimo por defecto
                     await signInAnonymously(auth);
-                    console.log("Sesión iniciada anónimamente.");
                 }
                 
                 isAuthReady = true;
-                // Una vez autenticado, iniciar la carga de datos del piso actual
                 switchFloor(currentFloor); 
 
             } catch (error) {
@@ -337,102 +389,114 @@
             }
         }
 
-        // --- Funciones de Modal / Confirmación ---
-        function resetConfirmButtonStyles(isConfirmation) {
-            // Reiniciar estilos y visibilidad
-            if (isConfirmation) {
-                confirmOkButton.textContent = 'Aceptar';
-                confirmOkButton.classList.remove('bg-indigo-600', 'bg-green-600');
-                confirmOkButton.classList.add('bg-red-600');
-                confirmCancelButton.classList.remove('hidden');
-            } else {
-                confirmOkButton.textContent = 'Entendido';
-                confirmOkButton.classList.remove('bg-red-600', 'bg-green-600');
-                confirmOkButton.classList.add('bg-indigo-600');
-                confirmCancelButton.classList.add('hidden');
-            }
-        }
-        
-        function showConfirmModal(title, message, onConfirm, isConfirmation = true) {
-            document.getElementById('confirm-title').textContent = title;
-            document.getElementById('confirm-message').textContent = message;
-            confirmModal.classList.remove('hidden');
+        // --- Funciones de Historial ---
 
-            resetConfirmButtonStyles(isConfirmation);
-
-            const okHandler = () => {
-                onConfirm();
-                hideConfirmModal();
-                cleanup();
-            };
-            const cancelHandler = () => {
-                hideConfirmModal();
-                cleanup();
-            };
+        function formatFirestoreTimestamp(timestampString) {
+            // Asume que el ID del documento es un ISOString
+            const date = new Date(timestampString.replace(/_/g, '.'));
             
-            function cleanup() {
-                confirmOkButton.removeEventListener('click', okHandler);
-                confirmCancelButton.removeEventListener('click', cancelHandler);
-            }
-
-            confirmOkButton.addEventListener('click', okHandler);
-            confirmCancelButton.addEventListener('click', cancelHandler);
+            if (isNaN(date)) return timestampString;
             
-            // Si no es confirmación, solo debe funcionar el botón OK
-            if (!isConfirmation) {
-                confirmCancelButton.removeEventListener('click', cancelHandler);
-            }
+            const formatter = new Intl.DateTimeFormat('es-CL', {
+                year: 'numeric', month: '2-digit', day: '2-digit', 
+                hour: '2-digit', minute: '2-digit', second: '2-digit', 
+                hour12: false // Formato 24 horas
+            });
+            return formatter.format(date);
         }
 
-        function hideConfirmModal() {
-            confirmModal.classList.add('hidden');
-        }
+        async function loadFloorHistory() {
+            historyList.innerHTML = '<li class="text-gray-500 text-center py-4">Cargando historial...</li>';
+            historyDetailBody.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-gray-500">El detalle del día aparecerá aquí.</td></tr>'; // Colspan ajustado
+            historyDetailTitle.textContent = 'Selecciona una fecha...';
+            floorHistoryData = {}; // Limpiar caché
 
-        // --- FUNCIÓN DE TOAST Y SONIDO ACTUALIZADA ---
-        function showSuccessToast() {
-            // 1. Reproducir el sonido de victoria
             try {
-                // Usando la URL RAW (directa) del archivo MP3 en GitHub
-                const audioUrl = 'https://raw.githubusercontent.com/israelvayas/CONTROLUNIDADESCEO1.0/main/small-victory.mp3';
-                const successAudio = new Audio(audioUrl);
+                const historyRef = getHistoryCollectionRef(currentFloor);
+                // Consulta para obtener todos los documentos, ordenados por fecha de forma descendente (más recientes primero)
+                const q = query(historyRef, orderBy('date', 'desc'));
+                const querySnapshot = await getDocs(q);
                 
-                successAudio.volume = 1.0; // Mantiene el volumen al máximo
-                successAudio.load(); // Intenta precargar para mejor fiabilidad
+                if (querySnapshot.empty) {
+                    historyList.innerHTML = '<li class="text-gray-500 text-center py-4">No hay registros de cierre anteriores.</li>';
+                    return;
+                }
+
+                historyList.innerHTML = ''; // Limpiar mensaje de carga
+                querySnapshot.docs.forEach(docSnap => {
+                    const data = docSnap.data();
+                    // Usar el campo 'date' que se guardará como ISOString para un mejor orden. Si no está, usa el ID.
+                    const displayDate = data.date ? formatFirestoreTimestamp(data.date) : formatFirestoreTimestamp(docSnap.id);
+                    
+                    // Almacenar en caché el registro completo usando el ID de Firestore
+                    floorHistoryData[docSnap.id] = data; 
+                    
+                    const listItem = document.createElement('li');
+                    listItem.className = 'history-list-item cursor-pointer p-2 rounded-md transition duration-150';
+                    listItem.dataset.recordId = docSnap.id;
+                    listItem.textContent = displayDate;
+                    
+                    listItem.addEventListener('click', () => {
+                        // Resaltar el item seleccionado
+                        document.querySelectorAll('.history-list-item').forEach(item => item.classList.remove('active'));
+                        listItem.classList.add('active');
+                        // Mostrar el detalle
+                        renderHistoryDetail(docSnap.id);
+                    });
+
+                    historyList.appendChild(listItem);
+                });
                 
-                // Intentar reproducir. La reproducción automática puede fallar si no hay interacción previa.
-                successAudio.play().catch(e => console.warn("No se pudo reproducir el audio de éxito. Asegúrate de haber interactuado con la página.", e));
-            } catch (e) {
-                 console.warn("Error al crear el objeto Audio:", e);
+                // Muestra el detalle del registro más reciente por defecto
+                if (querySnapshot.docs.length > 0) {
+                    const latestId = querySnapshot.docs[0].id;
+                    const latestItem = document.querySelector(`[data-record-id="${latestId}"]`);
+                    if(latestItem) {
+                        latestItem.classList.add('active');
+                        renderHistoryDetail(latestId);
+                    }
+                }
+
+            } catch (error) {
+                console.error("Error al cargar el historial:", error);
+                historyList.innerHTML = '<li class="text-red-500 text-center py-4">Error al cargar el historial.</li>';
             }
-
-
-            // 2. Mostrar el toast
-            successToast.classList.remove('hidden');
-            
-            // Forzar reflow para aplicar la transición
-            void toastContent.offsetWidth; 
-
-            // Aplicar estilos de transición (slide up y opacidad)
-            toastContent.classList.remove('translate-y-full', 'opacity-0');
-            toastContent.classList.add('translate-y-0', 'opacity-100');
-
-            // 3. Ocultar después de 10 segundos
-            setTimeout(() => {
-                // Aplicar estilos de transición (slide down y opacidad)
-                toastContent.classList.remove('translate-y-0', 'opacity-100');
-                toastContent.classList.add('translate-y-full', 'opacity-0');
-
-                // Ocultar completamente el contenedor después de la transición (0.3s)
-                setTimeout(() => {
-                    successToast.classList.add('hidden');
-                }, 300);
-            }, 10000); // 10000 milisegundos = 10 segundos
         }
 
-        // --- Funciones de Renderizado ---
+        function renderHistoryDetail(recordId) {
+            const record = floorHistoryData[recordId];
+            if (!record) {
+                historyDetailBody.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-red-500">Registro no encontrado.</td></tr>';
+                historyDetailTitle.textContent = 'Registro no encontrado';
+                return;
+            }
+
+            // Usar el campo 'date' para el título
+            const titleDate = record.date ? formatFirestoreTimestamp(record.date) : 'Detalle del Día';
+            historyDetailTitle.textContent = `Detalle: ${titleDate}`;
+            
+            historyDetailBody.innerHTML = '';
+            
+            record.insumos.sort((a, b) => a.name.localeCompare(b.name));
+
+            record.insumos.forEach(insumo => {
+                const row = document.createElement('tr');
+                row.className = 'border-b hover:bg-gray-50';
+                
+                row.innerHTML = `
+                    <td class="text-left py-2 px-3">${insumo.name}</td>
+                    <td class="text-center py-2 px-3">${insumo.initialInventory}</td>
+                    <td class="text-center py-2 px-3">${insumo.separated}</td>
+                    <td class="text-center py-2 px-3">${insumo.surplus || 0}</td> <td class="text-center py-2 px-3 font-semibold ${insumo.gastado > 0 ? 'text-red-600' : 'text-gray-700'}">${insumo.gastado}</td>
+                `;
+                historyDetailBody.appendChild(row);
+            });
+        }
+
+
+        // --- Funciones de Renderizado (Existentes) ---
         function renderTable() {
             tableBody.innerHTML = '';
-            // Asegurarse de que insumos sea al menos un array vacío si floorsData[currentFloor] no está definido aún
             const insumos = floorsData[currentFloor] || []; 
             
             insumos.sort((a, b) => a.name.localeCompare(b.name));
@@ -446,7 +510,6 @@
                 const row = document.createElement('tr');
                 row.className = 'border-b hover:bg-gray-50';
                 const gastado = Math.max(0, insumo.separated - insumo.surplus);
-                // Aplica clase highlight solo si gastado > 0
                 const highlightClass = gastado > 0 ? 'highlight' : ''; 
 
                 row.innerHTML = `
@@ -467,8 +530,194 @@
                 tableBody.appendChild(row);
             });
         }
-
+        
         // --- Manejadores de Eventos ---
+        
+        // Manejador del botón Finalizar Día (Lógica de Validación Invertida y Corregida)
+        endDayButton.addEventListener('click', () => {
+            const insumos = floorsData[currentFloor];
+            
+            if (!insumos || insumos.length === 0) {
+                 showConfirmModal('Error', 'No hay insumos para finalizar el día.', () => hideConfirmModal(), false);
+                 return;
+            }
+
+            let separatedWithoutSurplus = false;
+            let surplusExceedsSeparated = false;
+
+            for (const insumo of insumos) {
+                // Validación: Si separó, el sobrante no puede ser 0
+                // **Esta es la validación clave que pides**: si Separado > 0 Y Sobrante = 0, no permitir
+                if (insumo.separated > 0 && insumo.surplus === 0) {
+                    separatedWithoutSurplus = true;
+                }
+                
+                // Validación: Sobrante > Separado
+                if (insumo.surplus > insumo.separated) {
+                    surplusExceedsSeparated = true;
+                    break; 
+                }
+            }
+
+            // Validación 1: Sobrante > Separado (Error Fatal)
+            if (surplusExceedsSeparated) {
+                showConfirmModal(
+                    'Error de Validación',
+                    'No se puede finalizar el día: el valor de "Sobrante" no puede ser mayor que el valor de "Separado" en ningún insumo. Por favor, corrige los datos.',
+                    () => { /* No action on confirm */ },
+                    false 
+                );
+                return;
+            }
+
+            // Validación 2: Separado > 0 y Sobrante = 0
+            if (separatedWithoutSurplus) {
+                 showConfirmModal(
+                    'Error de Validación',
+                    'No se puede finalizar el día: si separaste insumos (Separado > 0), debes registrar el sobrante (Sobrante > 0).',
+                    () => { /* No action on confirm */ },
+                    false // Bloquea el cierre
+                );
+                return;
+            }
+            
+            // Si todo está bien, pide confirmación para ejecutar la lógica de cierre
+            showConfirmModal(
+                'Finalizar Día',
+                'Esta acción actualizará el inventario con los valores gastados y reiniciará los campos para el día siguiente. ¿Estás seguro?',
+                () => executeDayEndLogic()
+            );
+            
+        });
+
+        // Función de Lógica de Cierre (Actualizada para incluir Sobrante en el historial)
+        async function executeDayEndLogic() {
+            const insumos = floorsData[currentFloor];
+            const recordsToSave = [];
+            const currentDate = new Date().toISOString();
+
+            insumos.forEach(insumo => {
+                const gastado = Math.max(0, insumo.separated - insumo.surplus);
+                
+                // Guardar la data para el registro de historial (AÑADIDO SURPLUS)
+                recordsToSave.push({
+                    name: insumo.name,
+                    initialInventory: insumo.inventory, 
+                    separated: insumo.separated,
+                    surplus: insumo.surplus, // <--- AÑADIDO PARA EL HISTORIAL
+                    gastado: gastado
+                });
+
+                // Actualizar el inventario y reiniciar campos
+                insumo.inventory -= gastado;
+                if (insumo.inventory < 0) insumo.inventory = 0; 
+                insumo.separated = insumo.surplus; 
+                insumo.surplus = 0;
+            });
+            
+            // 1. Guardar el registro de historial PRIMERO
+            await saveDayCloseRecord({
+                date: currentDate,
+                floor: currentFloor,
+                insumos: recordsToSave 
+            });
+
+            // 2. Guardar el estado actual de los insumos (inventario actualizado)
+            saveFloorDataToFirestore();
+            renderTable();
+            showSuccessToast(); 
+        }
+
+        // --- Manejadores de Historial ---
+        viewHistoryButton.addEventListener('click', () => {
+            historyModal.classList.remove('hidden');
+            loadFloorHistory(); // Cargar datos del historial al abrir
+        });
+        
+        closeHistoryButton.addEventListener('click', () => {
+            historyModal.classList.add('hidden');
+        });
+        
+        // --- Funciones de Modal / Confirmación (Existentes) ---
+        function resetConfirmButtonStyles(isConfirmation) {
+            // Asegura que el botón de OK sea rojo para las confirmaciones críticas y azul/verde para mensajes informativos
+            if (isConfirmation) {
+                confirmOkButton.textContent = 'Aceptar';
+                confirmOkButton.classList.remove('bg-indigo-600', 'bg-green-600');
+                confirmOkButton.classList.add('bg-red-600');
+                confirmCancelButton.classList.remove('hidden');
+            } else {
+                confirmOkButton.textContent = 'Entendido';
+                confirmOkButton.classList.remove('bg-red-600', 'bg-green-600');
+                confirmOkButton.classList.add('bg-indigo-600');
+                confirmCancelButton.classList.add('hidden');
+            }
+        }
+        
+        function showConfirmModal(title, message, onConfirm, isConfirmation = true) {
+            document.getElementById('confirm-title').textContent = title;
+            document.getElementById('confirm-message').textContent = message;
+            confirmModal.classList.remove('hidden');
+
+            // Limpia listeners anteriores
+            const oldOk = confirmOkButton.cloneNode(true);
+            confirmOkButton.parentNode.replaceChild(oldOk, confirmOkButton);
+            const newOk = document.getElementById('confirm-ok-button');
+            
+            const oldCancel = confirmCancelButton.cloneNode(true);
+            confirmCancelButton.parentNode.replaceChild(oldCancel, confirmCancelButton);
+            const newCancel = document.getElementById('confirm-cancel-button');
+            
+            resetConfirmButtonStyles(isConfirmation);
+
+            const okHandler = () => {
+                onConfirm();
+                hideConfirmModal();
+            };
+            const cancelHandler = () => {
+                hideConfirmModal();
+            };
+            
+            newOk.addEventListener('click', okHandler);
+            if (isConfirmation) {
+                newCancel.addEventListener('click', cancelHandler);
+            } else {
+                // Si no es confirmación, el botón de cancelar no hace nada o está oculto.
+                newCancel.addEventListener('click', cancelHandler); // Añadimos el handler, aunque esté oculto.
+            }
+        }
+
+        function hideConfirmModal() {
+            confirmModal.classList.add('hidden');
+        }
+
+        function showSuccessToast() {
+            try {
+                const audioUrl = 'https://raw.githubusercontent.com/israelvayas/CONTROLUNIDADESCEO1.0/main/small-victory.mp3';
+                const successAudio = new Audio(audioUrl);
+                successAudio.volume = 1.0; 
+                successAudio.load(); 
+                successAudio.play().catch(e => console.warn("No se pudo reproducir el audio de éxito.", e));
+            } catch (e) {
+                 console.warn("Error al crear el objeto Audio:", e);
+            }
+
+            successToast.classList.remove('hidden');
+            void toastContent.offsetWidth; 
+            toastContent.classList.remove('translate-y-full', 'opacity-0');
+            toastContent.classList.add('translate-y-0', 'opacity-100');
+
+            setTimeout(() => {
+                toastContent.classList.remove('translate-y-0', 'opacity-100');
+                toastContent.classList.add('translate-y-full', 'opacity-0');
+
+                setTimeout(() => {
+                    successToast.classList.add('hidden');
+                }, 300);
+            }, 10000);
+        }
+
+        // --- Event Listeners restantes (Existentes) ---
         floorSelector.addEventListener('change', (e) => {
             switchFloor(e.target.value);
         });
@@ -478,9 +727,8 @@
             if (!target.classList.contains('table-input')) return;
 
             const name = target.dataset.name;
-            // Asegurarse de que el valor es un número entero no negativo
             const value = Math.max(0, parseInt(target.value, 10) || 0);
-            target.value = value; // Sincronizar el input con el valor validado
+            target.value = value;
             
             const insumo = floorsData[currentFloor].find(i => i.name === name);
 
@@ -491,7 +739,6 @@
                     insumo.surplus = value;
                 }
 
-                // Recalcular y actualizar la celda 'Gastado'
                 const gastado = Math.max(0, insumo.separated - insumo.surplus);
                 const row = target.closest('tr');
                 const gastadoCell = row.querySelector('.gastado-cell');
@@ -536,7 +783,6 @@
 
         addInsumoForm.addEventListener('submit', (e) => {
             e.preventDefault();
-            // Si la data del piso no está cargada (aún está esperando la respuesta inicial de Firestore)
             if (!isFloorDataLoaded) {
                  showConfirmModal('Cargando', 'Por favor, espera un momento a que los datos del piso terminen de cargar.', () => hideConfirmModal(), false);
                  return;
@@ -566,7 +812,6 @@
                 surplus: 0
             });
 
-            // Guardamos inmediatamente lo que el usuario agregó
             saveFloorDataToFirestore();
             renderTable();
             addInsumoForm.reset();
@@ -583,7 +828,6 @@
                 return;
             }
 
-            // Verificar si el nuevo nombre ya existe (y no es el mismo insumo)
             const exists = floorsData[currentFloor].some(i => i.name.toLowerCase() === newName.toLowerCase() && i.name !== originalName);
             if (exists) {
                 showConfirmModal('Error', 'Ya existe otro insumo con ese nombre.', () => hideConfirmModal(), false);
@@ -603,90 +847,21 @@
         cancelEditButton.addEventListener('click', () => {
             editModal.classList.add('hidden');
         });
-
-        endDayButton.addEventListener('click', () => {
-            const insumos = floorsData[currentFloor];
-            
-            if (!insumos || insumos.length === 0) {
-                 showConfirmModal('Error', 'No hay insumos para finalizar el día.', () => hideConfirmModal(), false);
-                 return;
-            }
-
-            let allSurplusZero = true;
-            let surplusExceedsSeparated = false;
-
-            for (const insumo of insumos) {
-                if (insumo.surplus > 0) {
-                    allSurplusZero = false;
-                }
-                if (insumo.surplus > insumo.separated) {
-                    surplusExceedsSeparated = true;
-                    break; 
-                }
-            }
-
-            // Validación 1: Sobrante > Separado
-            if (surplusExceedsSeparated) {
-                showConfirmModal(
-                    'Error de Validación',
-                    'No se puede finalizar el día: el valor de "Sobrante" no puede ser mayor que el valor de "Separado" en ningún insumo.',
-                    () => { /* No action on confirm */ },
-                    false // No es una confirmación, es un error
-                );
-                return;
-            }
-
-            // Validación 2: Si hay algo separado, debe haber sobrante (o todo gastado).
-            if (insumos.some(i => i.separated > 0) && allSurplusZero) {
-                 showConfirmModal(
-                    'Error de Validación',
-                    'No se puede finalizar el día: si separaste insumos (Separado > 0), debes registrar el sobrante (Sobrante > 0).',
-                    () => { /* No action on confirm */ },
-                    false // No es una confirmación, es un error
-                );
-                return;
-            }
-
-            // Si las validaciones pasan, pide confirmación para la acción
-            showConfirmModal(
-                'Finalizar Día',
-                'Esta acción actualizará el inventario con los valores gastados y reiniciará los campos para el día siguiente. ¿Estás seguro?',
-                () => {
-                    insumos.forEach(insumo => {
-                        const gastado = Math.max(0, insumo.separated - insumo.surplus);
-                        insumo.inventory -= gastado;
-                        if (insumo.inventory < 0) insumo.inventory = 0; // Evitar inventario negativo
-                        
-                        // Sobrante pasa a ser lo separado del día siguiente
-                        insumo.separated = insumo.surplus; 
-                        insumo.surplus = 0;
-                    });
-                    saveFloorDataToFirestore();
-                    renderTable();
-                    // Ejecutar la notificación de éxito
-                    showSuccessToast(); 
-                }
-            );
-        });
         
         // Inicializar la aplicación al cargar el DOM
         document.addEventListener('DOMContentLoaded', () => {
-            // FIX: Simplificamos la lógica de inicialización para que use directamente el valor de 'currentFloor'
-            // que fue cargado desde localStorage. El chequeo anterior causaba un reseteo innecesario.
             floorSelector.value = currentFloor;
             
-            // Si por alguna razón el valor cargado no es una opción válida, nos aseguramos de que
-            // floorSelector muestre algo válido y currentFloor se actualice.
             if (floorSelector.value !== currentFloor) {
                 currentFloor = 'SUBSUELO';
                 floorSelector.value = currentFloor;
             }
 
             floorTitle.textContent = `Control de Unidades - ${currentFloor.replace('_', ' ')}`;
+            historyFloorTitle.textContent = currentFloor.replace('_', ' '); // Inicializar título del modal
             setupFirebaseAndAuth();
         });
 
-        // Limpieza de listener al cerrar/salir
         window.addEventListener('beforeunload', () => {
             unsubscribeFloor();
         });
