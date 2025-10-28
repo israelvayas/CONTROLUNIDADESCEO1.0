@@ -50,7 +50,6 @@
 </head>
 <body class="p-4 md:p-8">
 
-    <!-- Indicador de Carga -->
     <div id="loading-indicator" class="fixed inset-0 bg-gray-100 bg-opacity-75 flex items-center justify-center z-50">
         <div class="p-4 bg-white rounded-lg shadow-lg flex items-center space-x-3">
             <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -63,7 +62,6 @@
 
     <div class="max-w-7xl mx-auto bg-white p-6 rounded-2xl shadow-lg">
 
-        <!-- Cabecera -->
         <header class="flex flex-col md:flex-row justify-between items-center mb-6 pb-4 border-b">
             <h1 id="floor-title" class="text-3xl font-bold text-gray-800 text-center mb-4 md:mb-0"></h1>
             <div class="flex items-center space-x-4">
@@ -80,7 +78,6 @@
             </div>
         </header>
 
-        <!-- Tabla de Insumos -->
         <div class="overflow-x-auto">
             <table class="min-w-full bg-white">
                 <thead class="bg-gray-800 text-white">
@@ -94,12 +91,10 @@
                     </tr>
                 </thead>
                 <tbody id="insumos-table-body" class="text-gray-700">
-                    <!-- Filas generadas por JS -->
-                </tbody>
+                    </tbody>
             </table>
         </div>
 
-        <!-- Agregar Nuevo Insumo -->
         <div class="mt-8 pt-6 border-t">
             <h2 class="text-2xl font-semibold text-gray-800 mb-4">Agregar Nuevo Insumo</h2>
             <form id="add-insumo-form" class="flex flex-col md:flex-row items-end gap-4">
@@ -118,7 +113,6 @@
         </div>
     </div>
 
-    <!-- Modal para Editar Insumo -->
     <div id="edit-modal" class="hidden fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-50 p-4 modal">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6 modal-content">
             <h2 class="text-2xl font-bold text-gray-800 mb-4">Editar Insumo</h2>
@@ -140,19 +134,25 @@
         </div>
     </div>
 
-    <!-- Modal de Confirmación / Error -->
     <div id="confirm-modal" class="hidden fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-50 p-4 modal">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-sm p-6 modal-content text-center">
             <h2 id="confirm-title" class="text-xl font-bold text-gray-800 mb-4"></h2>
             <p id="confirm-message" class="text-gray-600 mb-6"></p>
             <div class="flex justify-center space-x-4">
-                <!-- El botón Cancelar solo se muestra en acciones que lo requieren -->
                 <button id="confirm-cancel-button" class="bg-gray-200 text-gray-800 px-6 py-2 rounded-md">Cancelar</button>
                 <button id="confirm-ok-button" class="bg-red-600 text-white px-6 py-2 rounded-md">Aceptar</button>
             </div>
         </div>
     </div>
 
+    <div id="success-toast" class="hidden fixed bottom-6 right-6 z-50">
+        <div class="bg-green-600 text-white p-4 rounded-lg shadow-xl flex items-center space-x-3 transition duration-300 ease-out transform translate-y-full opacity-0" id="toast-content">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span class="font-semibold text-lg">¡Día Finalizado Correctamente!</span>
+        </div>
+    </div>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
@@ -198,6 +198,10 @@
         const confirmModal = document.getElementById('confirm-modal');
         const confirmOkButton = document.getElementById('confirm-ok-button');
         const confirmCancelButton = document.getElementById('confirm-cancel-button');
+        
+        // --- NUEVOS ELEMENTOS PARA NOTIFICACIÓN DE ÉXITO ---
+        const successToast = document.getElementById('success-toast');
+        const toastContent = document.getElementById('toast-content');
 
 
         const defaultInsumos = []; 
@@ -382,6 +386,44 @@
 
         function hideConfirmModal() {
             confirmModal.classList.add('hidden');
+        }
+
+        // --- NUEVA FUNCIÓN PARA TOAST Y SONIDO ---
+        function showSuccessToast() {
+            // 1. Reproducir un sonido de éxito
+            try {
+                // Uso de un data URI de MP3 muy simple como fallback/sonido estándar.
+                // Nota: El audio puede requerir interacción del usuario con la página.
+                const successAudio = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU1UAAAAPU291bmRGb3JnZSB2My4wVwAAAAScMGF1dGhvciBhY2NlcHQgbGlzZW5zZSBsZWdhY3k=');
+                successAudio.volume = 1.0; // AJUSTADO A VOLUMEN MÁXIMO
+                successAudio.load(); // Intenta precargar para mejor fiabilidad
+                successAudio.play().catch(e => console.warn("No se pudo reproducir el audio de éxito. Asegúrate de haber interactuado con la página.", e));
+            } catch (e) {
+                 console.warn("Error al crear el objeto Audio:", e);
+            }
+
+
+            // 2. Mostrar el toast
+            successToast.classList.remove('hidden');
+            
+            // Forzar reflow para aplicar la transición
+            void toastContent.offsetWidth; 
+
+            // Aplicar estilos de transición (slide up y opacidad)
+            toastContent.classList.remove('translate-y-full', 'opacity-0');
+            toastContent.classList.add('translate-y-0', 'opacity-100');
+
+            // 3. Ocultar después de 10 segundos
+            setTimeout(() => {
+                // Aplicar estilos de transición (slide down y opacidad)
+                toastContent.classList.remove('translate-y-0', 'opacity-100');
+                toastContent.classList.add('translate-y-full', 'opacity-0');
+
+                // Ocultar completamente el contenedor después de la transición (0.3s)
+                setTimeout(() => {
+                    successToast.classList.add('hidden');
+                }, 300);
+            }, 10000); // 10000 milisegundos = 10 segundos
         }
 
         // --- Funciones de Renderizado ---
@@ -618,6 +660,8 @@
                     });
                     saveFloorDataToFirestore();
                     renderTable();
+                    // Ejecutar la notificación de éxito
+                    showSuccessToast(); 
                 }
             );
         });
